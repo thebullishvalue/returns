@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="expanded"
 )
-VERSION = "v1.2.0 - Returns Engine"
+VERSION = "v1.2.1 - Returns Engine"
 
 # --- CSS Styling (Exact Match from app.py) ---
 st.markdown("""
@@ -307,6 +307,7 @@ with st.sidebar:
     st.markdown("---")
     
     run_button = st.button("Fetch Valuations", width='stretch', type="primary")
+    status_placeholder = st.empty() # Placeholder for success message
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
     st.markdown("### Platform Info")
@@ -315,7 +316,7 @@ with st.sidebar:
         <p style='font-size: 0.85rem; margin: 0; color: var(--text-muted); line-height: 1.6;'>
             <strong>Version:</strong> {VERSION}<br>
             <strong>Engine:</strong> Yahoo Finance API<br> 
-            <strong>Family:</strong> Pragyam Suite
+            <strong>Family:</strong> Hemrek Suite
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -382,7 +383,9 @@ if run_button and uploaded_file is not None:
                     st.session_state.results = portfolio
                     st.session_state.data_loaded = True
                     st.session_state.valuation_date_label = date_display
-                    st.success(f"✅ Valuation Update Complete (As of {date_display})!")
+                    
+                    # Update status in sidebar placeholder
+                    status_placeholder.success(f"✅ Valuation Update Complete (As of {date_display})!")
                 else:
                     st.error("No valid data to display after fetching prices.")
                     st.session_state.data_loaded = False
@@ -517,7 +520,7 @@ else:
     # --- Welcome State (Matches app.py style) ---
     st.markdown("""
     <div class='info-box welcome'>
-        <h4>Welcome to the Returns Tracker</h4>
+        <h4>Welcome to the Portfolio Returns Tracker</h4>
         <p>
             This module allows you to track the real-time or historical performance of your portfolios.
             It uses market data to compute valuations against your original cost basis.
@@ -566,4 +569,4 @@ else:
 
 # --- Footer ---
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption(f"© {datetime.now().year} Returns Trackker | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+st.caption(f"© {datetime.now().year} Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
