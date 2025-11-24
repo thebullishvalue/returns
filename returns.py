@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # --- System Configuration ---
 st.set_page_config(
-    page_title="Pragyam : Portfolio Returns Tracker", 
+    page_title="Portfolio Returns Tracker", 
     page_icon="📈", 
     layout="wide", 
     initial_sidebar_state="expanded"
@@ -323,7 +323,7 @@ with st.sidebar:
 # --- Main Application Logic ---
 st.markdown(f"""
 <div class="premium-header">
-    <h1>Pragyam : Portfolio Returns Tracker</h1>
+    <h1>Portfolio Returns Tracker</h1>
     <div class="tagline">Real-time valuation and performance tracking engine</div>
 </div>
 """, unsafe_allow_html=True)
@@ -517,7 +517,7 @@ else:
     # --- Welcome State (Matches app.py style) ---
     st.markdown("""
     <div class='info-box welcome'>
-        <h4>Welcome to the Pragyam Returns Tracker</h4>
+        <h4>Welcome to the Returns Tracker</h4>
         <p>
             This module allows you to track the real-time or historical performance of your portfolios.
             It uses market data to compute valuations against your original cost basis.
@@ -566,4 +566,4 @@ else:
 
 # --- Footer ---
 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption(f"© {datetime.now().year} Pragyam | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+st.caption(f"© {datetime.now().year} Returns Trackker | Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
