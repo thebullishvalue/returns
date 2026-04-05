@@ -2,221 +2,26 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import io
-import numpy as np
-import time
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
+import plotly.express as px
 
 # --- System Configuration ---
 st.set_page_config(
-    page_title="Portfolio Returns Tracker", 
-    page_icon="📈", 
-    layout="wide", 
-    initial_sidebar_state="expanded"
+    page_title="Returns | Portfolio Returns Tracker",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
-VERSION = "v1.2.1 - Returns Engine"
+VERSION = "v1.3.0 - Returns Engine"
 
-# --- CSS Styling (Exact Match from app.py) ---
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    
-    :root {
-        --primary-color: #FFC300;
-        --primary-rgb: 255, 195, 0;
-        --background-color: #0F0F0F;
-        --secondary-background-color: #1A1A1A;
-        --bg-card: #1A1A1A;
-        --bg-elevated: #2A2A2A;
-        --text-primary: #EAEAEA;
-        --text-secondary: #EAEAEA;
-        --text-muted: #888888;
-        --border-color: #2A2A2A;
-        --border-light: #3A3A3A;
-        
-        --success-green: #10b981;
-        --danger-red: #ef4444;
-        --warning-amber: #f59e0b;
-        --info-cyan: #06b6d4;
-        --neutral: #888888;
-    }
-    
-    * {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    
-    .main, [data-testid="stSidebar"] {
-        background-color: var(--background-color);
-        color: var(--text-primary);
-    }
-    
-    .stApp > header {
-        background-color: transparent;
-    }
-    
-    .block-container {
-        padding-top: 1rem;
-        max-width: 1400px;
-    }
-    
-    .premium-header {
-        background: var(--secondary-background-color);
-        padding: 1.25rem 2rem;
-        border-radius: 16px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.1);
-        border: 1px solid var(--border-color);
-        position: relative;
-        overflow: hidden;
-        margin-top: 2.5rem;
-    }
-    
-    .premium-header::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: radial-gradient(circle at 20% 50%, rgba(var(--primary-rgb),0.08) 0%, transparent 50%);
-        pointer-events: none;
-    }
-    
-    .premium-header h1 {
-        margin: 0;
-        font-size: 2.50rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        letter-spacing: -0.50px;
-        position: relative;
-    }
-    
-    .premium-header .tagline {
-        color: var(--text-muted);
-        font-size: 1rem;
-        margin-top: 0.25rem;
-        font-weight: 400;
-        position: relative;
-    }
-    
-    .metric-card {
-        background-color: var(--bg-card);
-        padding: 1.25rem;
-        border-radius: 12px;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
-        margin-bottom: 0.5rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 30px rgba(0,0,0,0.3);
-        border-color: var(--border-light);
-    }
-    
-    .metric-card h4 {
-        color: var(--text-muted);
-        font-size: 0.8rem;
-        margin-bottom: 0.5rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .metric-card h2 {
-        color: var(--text-primary);
-        font-size: 2rem;
-        font-weight: 700;
-        margin: 0;
-        line-height: 1;
-    }
-    
-    .metric-card .sub-metric {
-        font-size: 0.8rem;
-        color: var(--text-muted);
-        margin-top: 0.5rem;
-        font-weight: 500;
-    }
-    
-    .metric-card.success h2 { color: var(--success-green); }
-    .metric-card.danger h2 { color: var(--danger-red); }
-    .metric-card.warning h2 { color: var(--warning-amber); }
-    .metric-card.info h2 { color: var(--info-cyan); }
-    .metric-card.neutral h2 { color: var(--neutral); }
-    .metric-card.primary h2 { color: var(--primary-color); }
-    .metric-card.white h2 { color: var(--text-primary); }
-    
-    .info-box {
-        background: var(--secondary-background-color);
-        border: 1px solid var(--border-color);
-        border-left: 4px solid var(--primary-color);
-        padding: 1.25rem;
-        border-radius: 12px;
-        margin: 0.5rem 0;
-        box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.08);
-    }
-    
-    .info-box h4 {
-        color: var(--primary-color);
-        margin: 0 0 0.5rem 0;
-        font-size: 1rem;
-        font-weight: 700;
-    }
-
-    /* Buttons */
-    .stButton>button {
-        border: 2px solid var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        font-weight: 700;
-        border-radius: 12px;
-        padding: 0.75rem 2rem;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .stButton>button:hover {
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.6);
-        background: var(--primary-color);
-        color: #1A1A1A;
-        transform: translateY(-2px);
-    }
-    
-    .stButton>button:active {
-        transform: translateY(0);
-    }
-    
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] {
-        color: var(--text-muted);
-        border-bottom: 2px solid transparent;
-        transition: color 0.3s, border-bottom 0.3s;
-    }
-    .stTabs [aria-selected="true"] {
-        color: var(--primary-color);
-        border-bottom: 2px solid var(--primary-color);
-    }
-    .stDataFrame {
-        border-radius: 12px;
-        background-color: var(--secondary-background-color);
-        padding: 10px;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 0 25px rgba(var(--primary-rgb), 0.1);
-    }
-    h2 {
-        border-bottom: 1px solid var(--border-color);
-        padding-bottom: 10px;
-    }
-    .section-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent 0%, var(--border-color) 50%, transparent 100%);
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Load CSS from external file
+_css_path = os.path.join(os.path.dirname(__file__), "style.css")
+try:
+    with open(_css_path, encoding="utf-8") as _f:
+        st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
+except FileNotFoundError:
+    pass
 
 # --- Application State ---
 if 'data_loaded' not in st.session_state:
@@ -244,17 +49,17 @@ def fetch_prices(tickers: list, target_date=None) -> pd.Series:
             end_dt = target_date + timedelta(days=1)
             start_dt = target_date - timedelta(days=10)
             data = yf.download(tickers, start=start_dt, end=end_dt, progress=False)
-        
+
         if data.empty:
             return pd.Series(dtype=float)
-        
+
         # Get the 'Close' prices
         # Handle cases where columns might be multi-level if yfinance version varies
         try:
             close_prices = data['Close']
         except KeyError:
             return pd.Series(dtype=float)
-            
+
         if close_prices.empty:
              return pd.Series(dtype=float)
 
@@ -263,59 +68,83 @@ def fetch_prices(tickers: list, target_date=None) -> pd.Series:
             # We return a Series with index=[Ticker] and value=Price to ensure it maps correctly
             last_price = close_prices.iloc[-1]
             return pd.Series(data=[last_price], index=[tickers[0]])
-        
+
         # For multiple tickers, close_prices is a DataFrame (Index=Date, Columns=Tickers)
         # Get the last row (most recent date in the range)
         latest_prices = close_prices.iloc[-1]
         return latest_prices
-        
+
     except Exception as e:
         st.error(f"Error fetching data from yfinance: {e}")
         return pd.Series(dtype=float)
 
+
+# --- UI Primitives ---
+def _section_header(title: str, subtitle: str = "") -> str:
+    """Generate styled section header HTML."""
+    sub = f"<p class='section-subtitle'>{subtitle}</p>" if subtitle else ""
+    return f"<div class='section'><div class='section-header'><h3 class='section-title'>{title}</h3>{sub}</div></div>"
+
+
+def _section_divider():
+    """Render section divider."""
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
+def _metric_card(label: str, value: str, sub: str = "", cls: str = "neutral") -> str:
+    """Generate metric card HTML."""
+    sub_html = f"<div class='sub-metric'>{sub}</div>" if sub else ""
+    return f"<div class='metric-card {cls}'><h4>{label}</h4><h2>{value}</h2>{sub_html}</div>"
+
+
 # --- Sidebar Controls ---
 with st.sidebar:
-    st.markdown("# Configuration")
-    
-    st.markdown("### Data Input")
+    st.markdown("""
+    <div style="text-align:center; padding:1rem 0; margin-bottom:1rem;">
+        <div style="font-size:1.75rem; font-weight:800; color:#FFC300;">RETURNS</div>
+        <div style="color:#888; font-size:0.75rem; margin-top:0.25rem;">Portfolio Returns Tracker</div>
+    </div>
+    """, unsafe_allow_html=True)
+    _section_divider()
+
+    st.markdown('<div class="sidebar-title">📂 Data Input</div>', unsafe_allow_html=True)
     uploaded_file = st.file_uploader("Upload Portfolio CSV", type=["csv"], help="CSV must contain 'symbol', 'units', and 'value' columns.")
-    
-    st.markdown("### Market Settings")
+
+    st.markdown('<div class="sidebar-title">🌍 Market Settings</div>', unsafe_allow_html=True)
     market_type = st.radio(
         "Select Market Type",
         ("Global", "Indian"),
         help="Select 'Indian' to append '.NS' to symbols for NSE."
     )
-    
-    st.markdown("---")
-    
-    st.markdown("### Valuation Date")
+
+    _section_divider()
+
+    st.markdown('<div class="sidebar-title">📅 Valuation Date</div>', unsafe_allow_html=True)
     date_mode = st.radio(
-        "Valuation Mode", 
+        "Valuation Mode",
         ["Live / Latest", "Historical Date"],
         help="Choose 'Live' for current market prices or 'Historical' to check portfolio value on a specific past date."
     )
-    
+
     selected_valuation_date = None
     if date_mode == "Historical Date":
         selected_valuation_date = st.date_input(
-            "Select Date", 
+            "Select Date",
             value=datetime.today() - timedelta(days=1),
             max_value=datetime.today()
         )
-    
-    st.markdown("---")
-    
+
+    _section_divider()
+
     run_button = st.button("Fetch Valuations", width='stretch', type="primary")
     status_placeholder = st.empty() # Placeholder for success message
 
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-    st.markdown("### Platform Info")
+    _section_divider()
     st.markdown(f"""
     <div class='info-box'>
-        <p style='font-size: 0.85rem; margin: 0; color: var(--text-muted); line-height: 1.6;'>
+        <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
             <strong>Version:</strong> {VERSION}<br>
-            <strong>Engine:</strong> Yahoo Finance API<br> 
+            <strong>Engine:</strong> Yahoo Finance API<br>
             <strong>Family:</strong> Hemrek Suite
         </p>
     </div>
@@ -324,7 +153,7 @@ with st.sidebar:
 # --- Main Application Logic ---
 st.markdown(f"""
 <div class="premium-header">
-    <h1>Portfolio Returns Tracker</h1>
+    <h1>RETURNS | Portfolio Returns Tracker</h1>
     <div class="tagline">Real-time valuation and performance tracking engine</div>
 </div>
 """, unsafe_allow_html=True)
@@ -397,12 +226,12 @@ if run_button and uploaded_file is not None:
 # --- Display Results ---
 if st.session_state.data_loaded:
     results_df = st.session_state.results
-    
+
     # --- Portfolio Level Cards ---
     total_original_value = results_df['original_value'].sum()
     total_current_value = results_df['current_value'].sum()
     total_return_dollar = results_df['return_$'].sum()
-    
+
     # Avoid division by zero
     if total_original_value != 0:
         total_return_percent = (total_return_dollar / total_original_value) * 100
@@ -417,98 +246,113 @@ if st.session_state.data_loaded:
     else:
         pl_class = "neutral"
 
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown(f"""
-        <div class='metric-card'>
-            <h4>Original Investment</h4>
-            <h2>${total_original_value:,.2f}</h2>
-            <div class='sub-metric'>Initial Capital Deployed</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
+    # Top metrics strip
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    with mc1:
+        st.markdown(_metric_card("Original Investment", f"${total_original_value:,.2f}", "Initial Capital Deployed", "primary"), unsafe_allow_html=True)
+    with mc2:
         date_label = st.session_state.valuation_date_label
-        st.markdown(f"""
-        <div class='metric-card primary'>
-            <h4>Valuation ({date_label})</h4>
-            <h2>${total_current_value:,.2f}</h2>
-            <div class='sub-metric'>Market Value at selected date</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown(f"""
-        <div class='metric-card {pl_class}'>
-            <h4>Total P/L</h4>
-            <h2>${total_return_dollar:,.2f}</h2>
-            <div class='sub-metric'>{total_return_percent:,.2f}% Return</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(_metric_card(f"Valuation ({date_label})", f"${total_current_value:,.2f}", "Market Value at selected date", "info"), unsafe_allow_html=True)
+    with mc3:
+        st.markdown(_metric_card("Total P/L", f"${total_return_dollar:,.2f}", f"{total_return_percent:,.2f}% Return", pl_class), unsafe_allow_html=True)
+    with mc4:
+        num_positions = len(results_df)
+        st.markdown(_metric_card("Positions", str(num_positions), "Active holdings", "neutral"), unsafe_allow_html=True)
+
+    _section_divider()
 
     # --- Symbol Level Table ---
     tab1, tab2 = st.tabs(["**Detailed Holdings**", "**Visual Analysis**"])
-    
+
     with tab1:
-        st.subheader("Symbol Level Returns")
-        
+        st.markdown(_section_header(
+            "Symbol Level Returns",
+            f"{len(results_df)} positions · performance breakdown"
+        ), unsafe_allow_html=True)
+
         display_df = results_df[[
-            'symbol', 
-            'units', 
-            'original_value', 
-            'latest_price', 
-            'current_value', 
-            'return_$', 
+            'symbol',
+            'units',
+            'original_value',
+            'latest_price',
+            'current_value',
+            'return_$',
             'return_%'
         ]].copy()
-        
+
+        # Rename columns for display
+        display_df = display_df.rename(columns={
+            'symbol': 'Symbol',
+            'units': 'Units',
+            'original_value': 'Original Value ($)',
+            'latest_price': 'Latest Price ($)',
+            'current_value': 'Current Value ($)',
+            'return_$': 'P/L ($)',
+            'return_%': 'P/L (%)'
+        })
+
         # We use st.dataframe but in a container styled by the CSS above
         st.dataframe(
             display_df.style
             .format({
-                'original_value': '${:,.2f}',
-                'latest_price': '${:,.2f}',
-                'current_value': '${:,.2f}',
-                'return_$': '${:,.2f}',
-                'return_%': '{:,.2f}%',
-                'units': '{:,.2f}'
+                'Original Value ($)': '${:,.2f}',
+                'Latest Price ($)': '${:,.2f}',
+                'Current Value ($)': '${:,.2f}',
+                'P/L ($)': '${:,.2f}',
+                'P/L (%)': '{:,.2f}%',
+                'Units': '{:,.2f}'
             })
             .background_gradient(
-                cmap='RdYlGn', 
-                subset=['return_%'],
-                vmin=-10, 
-                vmax=10 
+                cmap='RdYlGn',
+                subset=['P/L (%)'],
+                vmin=-10,
+                vmax=10
             ),
             use_container_width=True,
             height=500
         )
-    
+
+        _section_divider()
+
+        # CSV Download
+        first_cols = ['Symbol', 'Units', 'Original Value ($)']
+        other_cols = [c for c in display_df.columns if c not in first_cols]
+        download_df = display_df[first_cols + other_cols]
+        buf = io.BytesIO()
+        download_df.to_csv(buf, index=False, encoding="utf-8-sig")
+        st.download_button(
+            label="Download Portfolio CSV",
+            data=buf.getvalue(),
+            file_name=f"returns_portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            width='stretch',
+            key="returns_csv_download",
+        )
+
     with tab2:
-        st.subheader("Performance Visualization")
-        # Reuse code structure from logic, but visualize
-        import plotly.express as px
-        
+        st.markdown(_section_header(
+            "Performance Visualization",
+            "Portfolio allocation and returns analysis"
+        ), unsafe_allow_html=True)
+
         col_viz1, col_viz2 = st.columns(2)
-        
+
         with col_viz1:
              fig_alloc = px.pie(
-                 results_df, 
-                 values='current_value', 
-                 names='symbol', 
+                 results_df,
+                 values='current_value',
+                 names='symbol',
                  title='Portfolio Allocation (Current Value)',
                  hole=0.4
              )
              fig_alloc.update_layout(template='plotly_dark')
              st.plotly_chart(fig_alloc, use_container_width=True)
-             
+
         with col_viz2:
              fig_bar = px.bar(
-                 results_df, 
-                 x='symbol', 
-                 y='return_%', 
+                 results_df,
+                 x='symbol',
+                 y='return_%',
                  color='return_%',
                  color_continuous_scale='RdYlGn',
                  title='Return % by Symbol'
@@ -517,7 +361,7 @@ if st.session_state.data_loaded:
              st.plotly_chart(fig_bar, use_container_width=True)
 
 else:
-    # --- Welcome State (Matches app.py style) ---
+    # --- Welcome State (Matches Pragyam style) ---
     st.markdown("""
     <div class='info-box welcome'>
         <h4>Welcome to the Portfolio Returns Tracker</h4>
@@ -535,38 +379,33 @@ else:
         </ol>
     </div>
     """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-        
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class='metric-card info'>
-            <h4>FLEXIBLE DATA</h4>
-            <h2>Time Travel</h2>
-            <div class='sub-metric'>Live or Historical Valuations</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class='metric-card success'>
-            <h4>INSTANT</h4>
-            <h2>P/L Analysis</h2>
-            <div class='sub-metric'>Automatic Calculation</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class='metric-card primary'>
-            <h4>VISUAL</h4>
-            <h2>Insights</h2>
-            <div class='sub-metric'>Interactive Charts</div>
-        </div>
-        """, unsafe_allow_html=True)
+
+    _section_divider()
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("""<div class='metric-card info'><h4>FLEXIBLE DATA</h4><h2>Time Travel</h2>
+        <div class='sub-metric'>Live or Historical Valuations</div></div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown("""<div class='metric-card success'><h4>INSTANT</h4><h2>P/L Analysis</h2>
+        <div class='sub-metric'>Automatic Calculation</div></div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown("""<div class='metric-card primary'><h4>VISUAL</h4><h2>Insights</h2>
+        <div class='sub-metric'>Interactive Charts</div></div>""", unsafe_allow_html=True)
+    with c4:
+        st.markdown("""<div class='metric-card warning'><h4>GLOBAL</h4><h2>Markets</h2>
+        <div class='sub-metric'>Multiple exchanges</div></div>""", unsafe_allow_html=True)
 
 # --- Footer ---
-st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-st.caption(f"© {datetime.now().year} Hemrek Capital | {VERSION} | Last Updated: {time.strftime('%Y-%m-%d %H:%M:%S IST')}")
+_section_divider()
+ist = timezone(offset=timedelta(hours=5, minutes=30))
+now_ist = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S IST")
+st.markdown(f"""
+<div style="text-align:center; padding:1rem 0; color:var(--text-muted); font-size:0.75rem;">
+    <span>© 2026 Hemrek Capital</span>
+    <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
+    <span>{VERSION}</span>
+    <span style="margin:0 0.5rem; color:var(--border-light);">|</span>
+    <span>{now_ist}</span>
+</div>
+""", unsafe_allow_html=True)
