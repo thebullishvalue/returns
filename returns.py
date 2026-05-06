@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-VERSION = "v1.3.0 - Returns Engine"
+VERSION = "v1.3.1 - Returns Engine" # Bumped version for Excel support
 
 # Load CSS from external file
 _css_path = os.path.join(os.path.dirname(__file__), "style.css")
@@ -108,7 +108,13 @@ with st.sidebar:
     _section_divider()
 
     st.markdown('<div class="sidebar-title">📂 Data Input</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Upload Portfolio CSV", type=["csv"], help="CSV must contain 'symbol', 'units', and 'value' columns.")
+    
+    # Updated to accept Excel files
+    uploaded_file = st.file_uploader(
+        "Upload Portfolio File", 
+        type=["csv", "xlsx", "xls"], 
+        help="File must be CSV or Excel and contain 'symbol', 'units', and 'value' columns."
+    )
 
     st.markdown('<div class="sidebar-title">🌍 Market Settings</div>', unsafe_allow_html=True)
     market_type = st.radio(
@@ -160,15 +166,25 @@ st.markdown(f"""
 
 if run_button and uploaded_file is not None:
     try:
-        # Load data
-        portfolio_df = pd.read_csv(uploaded_file)
+        # Load data based on file extension
+        if uploaded_file.name.endswith('.csv'):
+            portfolio_df = pd.read_csv(uploaded_file)
+        else:
+            portfolio_df = pd.read_excel(uploaded_file)
         
         # Validate required columns
         required_cols = ['symbol', 'units', 'value']
-        if not all(col in portfolio_df.columns for col in required_cols):
-            st.error(f"CSV must contain the following columns: {', '.join(required_cols)}")
+        
+        # Convert columns to lowercase temporarily to do a case-insensitive check
+        lower_cols = [col.lower() for col in portfolio_df.columns]
+        
+        if not all(col in lower_cols for col in required_cols):
+            st.error(f"File must contain the following columns: {', '.join(required_cols)}")
         else:
             with st.spinner("Processing portfolio data..."):
+                # Standardize column names if they were uppercase in Excel
+                portfolio_df.columns = [col.lower() for col in portfolio_df.columns]
+                
                 # Prepare DataFrame
                 portfolio = portfolio_df[['symbol', 'units', 'value']].copy()
                 portfolio.rename(columns={'value': 'original_value'}, inplace=True)
@@ -371,7 +387,7 @@ else:
         </p>
         <strong>To begin, please follow these steps:</strong>
         <ol style="margin-left: 20px; margin-top: 10px;">
-            <li>Prepare a CSV file with columns: <code>symbol</code>, <code>units</code>, <code>value</code> (original cost).</li>
+            <li>Prepare a <strong>CSV or Excel file</strong> with columns: <code>symbol</code>, <code>units</code>, <code>value</code> (original cost).</li>
             <li>Upload the file in the sidebar configuration panel.</li>
             <li>Select the <strong>Market Type</strong> (Global or Indian).</li>
             <li>Choose <strong>Valuation Mode</strong> (Live for today, or Historical for a past date).</li>
