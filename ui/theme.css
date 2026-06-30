@@ -260,7 +260,7 @@ footer {
 }
 
 .premium-header h1::after {
-    content: "स्विंग";
+    content: "";
     position: absolute;
     right: 0;
     top: 0;
