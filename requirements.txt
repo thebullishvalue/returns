@@ -4,3 +4,6 @@ yfinance
 plotly
 matplotlib
 openpyxl
+NseKit
+bse
+bsedata
