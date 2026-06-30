@@ -58,10 +58,15 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                 close_prices = data['Close']
                 if not close_prices.empty:
                     if len(tickers) == 1:
-                        last_price = float(close_prices.iloc[-1])
-                        prices = pd.Series(data=[last_price], index=[tickers[0]])
+                        # close_prices is a Series (dates as index)
+                        valid_prices = close_prices.dropna()
+                        if not valid_prices.empty:
+                            last_price = float(valid_prices.iloc[-1])
+                            prices = pd.Series(data=[last_price], index=[tickers[0]])
                     else:
-                        prices = close_prices.iloc[-1].dropna()
+                        # close_prices is a DataFrame (dates as index, tickers as columns)
+                        # ffill() carries the last valid close price forward to handle midnight/pre-market NaNs
+                        prices = close_prices.ffill().iloc[-1].dropna()
             except KeyError:
                 pass
     except Exception as e:
@@ -75,45 +80,57 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
     if missing_tickers and market_type == "Indian" and target_date is None:
         clean_symbols = {t: t.replace('.NS', '').replace('.BO', '') for t in missing_tickers}
         
-        # --- Fallback 1: NseKit ---
+        # --- Fallback 1: NseKit (Batch/Concurrent Fetching) ---
         still_missing = []
         try:
             import NseKit
+            from concurrent.futures import ThreadPoolExecutor, as_completed
             nse = NseKit.Nse()
-            for t, sym in clean_symbols.items():
+            
+            def _fetch_nsekit_single(t_sym):
+                t, sym = t_sym
                 fetched = False
+                price = None
                 try:
                     # Attempt standard NseKit methods
                     if hasattr(nse, 'cm_live_equity_price_info'):
                         info = nse.cm_live_equity_price_info(sym)
                         if isinstance(info, dict) and 'LastTradedPrice' in info:
-                            prices[t] = float(info['LastTradedPrice'])
+                            price = float(info['LastTradedPrice'])
                             fetched = True
                     
                     if not fetched and hasattr(nse, 'cm_live_equity_info'):
                         info = nse.cm_live_equity_info(sym)
                         if isinstance(info, dict) and 'priceInfo' in info:
-                            prices[t] = float(info['priceInfo'].get('lastPrice', 0))
+                            price = float(info['priceInfo'].get('lastPrice', 0))
                             fetched = True
 
                     # Fallback in case user is actually using nsetools
                     if not fetched and hasattr(nse, 'equity_live_stock_info'):
                         info = nse.equity_live_stock_info(sym)
                         if isinstance(info, dict) and 'priceInfo' in info:
-                            prices[t] = float(info['priceInfo'].get('lastPrice', 0))
+                            price = float(info['priceInfo'].get('lastPrice', 0))
                             fetched = True
                     
                     if not fetched and hasattr(nse, 'get_quote'):
                         info = nse.get_quote(sym)
                         if isinstance(info, dict):
-                            prices[t] = float(info.get('lastPrice', info.get('ltp', 0)))
+                            price = float(info.get('lastPrice', info.get('ltp', 0)))
                             fetched = True
                 except Exception:
                     pass
-                
-                if not fetched:
-                    still_missing.append(t)
-                    
+                return t, sym, fetched, price
+
+            # Mimic yfinance batch fetching by using threads
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(_fetch_nsekit_single, item): item for item in clean_symbols.items()}
+                for future in as_completed(futures):
+                    t, sym, fetched, price = future.result()
+                    if fetched and price is not None:
+                        prices[t] = price
+                    else:
+                        still_missing.append(t)
+                        
             clean_symbols = {t: clean_symbols[t] for t in still_missing}
         except ImportError:
             # NseKit not installed, gracefully proceed to next fallback
@@ -263,23 +280,30 @@ if run_button and uploaded_file is not None:
         # Validate required columns
         required_cols = ['symbol', 'units', 'value']
         
-        # Convert columns to lowercase temporarily to do a case-insensitive check
-        lower_cols = [col.lower() for col in portfolio_df.columns]
+        # Convert columns to lowercase and strip whitespace temporarily to do a robust check
+        lower_cols = [col.strip().lower() for col in portfolio_df.columns]
         
         if not all(col in lower_cols for col in required_cols):
             st.error(f"File must contain the following columns: {', '.join(required_cols)}")
         else:
             with st.spinner("Processing portfolio data..."):
-                # Standardize column names if they were uppercase in Excel
-                portfolio_df.columns = [col.lower() for col in portfolio_df.columns]
+                # Standardize column names
+                portfolio_df.columns = [col.strip().lower() for col in portfolio_df.columns]
                 
                 # Prepare DataFrame
                 portfolio = portfolio_df[['symbol', 'units', 'value']].copy()
                 portfolio.rename(columns={'value': 'original_value'}, inplace=True)
                 
-                # Apply market logic
+                # Sanitize numeric columns (handles comma strings e.g. "1,000" and prevents calculation crashes)
+                portfolio['units'] = pd.to_numeric(portfolio['units'].astype(str).str.replace(',', ''), errors='coerce')
+                portfolio['original_value'] = pd.to_numeric(portfolio['original_value'].astype(str).str.replace(',', ''), errors='coerce')
+                portfolio.dropna(subset=['units', 'original_value'], inplace=True)
+                
+                # Apply market logic intelligently
                 if market_type == "Indian":
-                    portfolio['ticker'] = portfolio['symbol'].astype(str) + ".NS"
+                    portfolio['ticker'] = portfolio['symbol'].astype(str).apply(
+                        lambda x: x if str(x).upper().endswith('.NS') or str(x).upper().endswith('.BO') else str(x) + ".NS"
+                    )
                 else:
                     portfolio['ticker'] = portfolio['symbol'].astype(str)
                 
@@ -310,7 +334,11 @@ if run_button and uploaded_file is not None:
                     # Calculate returns
                     portfolio['current_value'] = portfolio['latest_price'] * portfolio['units']
                     portfolio['return_$'] = portfolio['current_value'] - portfolio['original_value']
-                    portfolio['return_%'] = (portfolio['return_$'] / portfolio['original_value']) * 100
+                    
+                    # Handle division by zero for free/gifted shares where original_value is 0
+                    portfolio['return_%'] = 0.0
+                    mask = portfolio['original_value'] != 0
+                    portfolio.loc[mask, 'return_%'] = (portfolio.loc[mask, 'return_$'] / portfolio.loc[mask, 'original_value']) * 100
                     
                     # Store in session state
                     st.session_state.results = portfolio
