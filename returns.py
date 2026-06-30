@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-VERSION = "v1.4.0 - Returns Engine (Fallbacks Enabled)" # Bumped version for Fallbacks
+VERSION = "v2.0.0 - Returns Engine (Compare Mode & Glassmorphism)"
 
 # Load CSS from external file
 _css_path = os.path.join(os.path.dirname(__file__), "style.css")
@@ -24,12 +24,22 @@ except FileNotFoundError:
     pass
 
 # --- Application State ---
-if 'data_loaded' not in st.session_state:
-    st.session_state.data_loaded = False
-if 'results' not in st.session_state:
-    st.session_state.results = pd.DataFrame()
+if 'app_mode' not in st.session_state:
+    st.session_state.app_mode = "Single Portfolio"
+if 'data_loaded_single' not in st.session_state:
+    st.session_state.data_loaded_single = False
+if 'data_loaded_comp' not in st.session_state:
+    st.session_state.data_loaded_comp = False
+if 'results_single' not in st.session_state:
+    st.session_state.results_single = None
+if 'results_comp_1' not in st.session_state:
+    st.session_state.results_comp_1 = None
+if 'results_comp_2' not in st.session_state:
+    st.session_state.results_comp_2 = None
 if 'valuation_date_label' not in st.session_state:
     st.session_state.valuation_date_label = "Latest / Live"
+if 'comp_names' not in st.session_state:
+    st.session_state.comp_names = ("Portfolio 1", "Portfolio 2")
 
 # --- Helper Function ---
 @st.cache_data(ttl=600) # Cache data for 10 minutes
@@ -183,350 +193,277 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
 
     return prices
 
-
 # --- UI Primitives ---
 def _section_header(title: str, subtitle: str = "") -> str:
-    """Generate styled section header HTML."""
     sub = f"<p class='section-subtitle'>{subtitle}</p>" if subtitle else ""
     return f"<div class='section'><div class='section-header'><h3 class='section-title'>{title}</h3>{sub}</div></div>"
 
-
 def _section_divider():
-    """Render section divider."""
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-
 def _metric_card(label: str, value: str, sub: str = "", cls: str = "neutral") -> str:
-    """Generate metric card HTML."""
     sub_html = f"<div class='sub-metric'>{sub}</div>" if sub else ""
     return f"<div class='metric-card {cls}'><h4>{label}</h4><h2>{value}</h2>{sub_html}</div>"
+
+def process_portfolio_file(uploaded_file, market_type, target_date_arg):
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            portfolio_df = pd.read_csv(uploaded_file)
+        else:
+            portfolio_df = pd.read_excel(uploaded_file)
+        
+        required_cols = ['symbol', 'units', 'value']
+        lower_cols = [col.strip().lower() for col in portfolio_df.columns]
+        
+        if not all(col in lower_cols for col in required_cols):
+            return None, f"File {uploaded_file.name} must contain the following columns: {', '.join(required_cols)}"
+        
+        portfolio_df.columns = [col.strip().lower() for col in portfolio_df.columns]
+        portfolio = portfolio_df[['symbol', 'units', 'value']].copy()
+        portfolio.rename(columns={'value': 'original_value'}, inplace=True)
+        
+        portfolio['units'] = pd.to_numeric(portfolio['units'].astype(str).str.replace(',', ''), errors='coerce')
+        portfolio['original_value'] = pd.to_numeric(portfolio['original_value'].astype(str).str.replace(',', ''), errors='coerce')
+        portfolio.dropna(subset=['units', 'original_value'], inplace=True)
+        
+        if market_type == "Indian":
+            portfolio['ticker'] = portfolio['symbol'].astype(str).apply(
+                lambda x: x if str(x).upper().endswith('.NS') or str(x).upper().endswith('.BO') else str(x) + ".NS"
+            )
+        else:
+            portfolio['ticker'] = portfolio['symbol'].astype(str)
+        
+        tickers = portfolio['ticker'].tolist()
+        
+        latest_prices = fetch_prices(tickers, target_date_arg, market_type)
+        
+        if latest_prices.empty:
+            return None, f"Could not fetch any data for {uploaded_file.name}."
+            
+        portfolio['latest_price'] = portfolio['ticker'].map(latest_prices)
+        failed_fetches = portfolio[portfolio['latest_price'].isna()]['symbol'].tolist()
+        
+        if failed_fetches:
+            st.warning(f"Could not fetch data for {uploaded_file.name}: {', '.join(failed_fetches)}. Excluded.")
+            portfolio.dropna(subset=['latest_price'], inplace=True)
+
+        if not portfolio.empty:
+            portfolio['current_value'] = portfolio['latest_price'] * portfolio['units']
+            portfolio['return_$'] = portfolio['current_value'] - portfolio['original_value']
+            portfolio['return_%'] = 0.0
+            mask = portfolio['original_value'] != 0
+            portfolio.loc[mask, 'return_%'] = (portfolio.loc[mask, 'return_$'] / portfolio.loc[mask, 'original_value']) * 100
+            return portfolio, None
+        else:
+            return None, f"No valid data to display for {uploaded_file.name} after fetching prices."
+            
+    except Exception as e:
+        return None, f"An error occurred for {uploaded_file.name}: {e}"
+
+def render_portfolio_metrics(results_df, date_label):
+    total_original_value = results_df['original_value'].sum()
+    total_current_value = results_df['current_value'].sum()
+    total_return_dollar = results_df['return_$'].sum()
+    total_return_percent = (total_return_dollar / total_original_value) * 100 if total_original_value != 0 else 0.0
+    pl_class = "success" if total_return_dollar > 0 else "danger" if total_return_dollar < 0 else "neutral"
+
+    # Make smaller columns inside columns for compact compare view
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(_metric_card("Original", f"${total_original_value:,.2f}", "Capital Deployed", "primary"), unsafe_allow_html=True)
+        st.markdown(_metric_card("Total P/L", f"${total_return_dollar:,.2f}", f"{total_return_percent:,.2f}%", pl_class), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_metric_card(f"Valuation ({date_label})", f"${total_current_value:,.2f}", "Market Value", "info"), unsafe_allow_html=True)
+        st.markdown(_metric_card("Positions", str(len(results_df)), "Active holdings", "neutral"), unsafe_allow_html=True)
+
+    return total_return_dollar, total_return_percent
+
+def render_portfolio_metrics_wide(results_df, date_label):
+    total_original_value = results_df['original_value'].sum()
+    total_current_value = results_df['current_value'].sum()
+    total_return_dollar = results_df['return_$'].sum()
+    total_return_percent = (total_return_dollar / total_original_value) * 100 if total_original_value != 0 else 0.0
+    pl_class = "success" if total_return_dollar > 0 else "danger" if total_return_dollar < 0 else "neutral"
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    with mc1: st.markdown(_metric_card("Original", f"${total_original_value:,.2f}", "Capital Deployed", "primary"), unsafe_allow_html=True)
+    with mc2: st.markdown(_metric_card(f"Valuation ({date_label})", f"${total_current_value:,.2f}", "Market Value", "info"), unsafe_allow_html=True)
+    with mc3: st.markdown(_metric_card("Total P/L", f"${total_return_dollar:,.2f}", f"{total_return_percent:,.2f}%", pl_class), unsafe_allow_html=True)
+    with mc4: st.markdown(_metric_card("Positions", str(len(results_df)), "Active holdings", "neutral"), unsafe_allow_html=True)
+
+def render_portfolio_tables(results_df):
+    display_df = results_df[['symbol', 'units', 'original_value', 'latest_price', 'current_value', 'return_$', 'return_%']].copy()
+    display_df = display_df.rename(columns={'symbol': 'Symbol', 'units': 'Units', 'original_value': 'Orig Val ($)', 'latest_price': 'Price ($)', 'current_value': 'Curr Val ($)', 'return_$': 'P/L ($)', 'return_%': 'P/L (%)'})
+    st.dataframe(display_df.style.format({'Orig Val ($)': '${:,.2f}', 'Price ($)': '${:,.2f}', 'Curr Val ($)': '${:,.2f}', 'P/L ($)': '${:,.2f}', 'P/L (%)': '{:,.2f}%', 'Units': '{:,.2f}'}).background_gradient(cmap='RdYlGn', subset=['P/L (%)'], vmin=-10, vmax=10), use_container_width=True, height=400)
+
+def render_portfolio_charts(results_df, prefix=""):
+    fig_alloc = px.pie(results_df, values='current_value', names='symbol', title=f'{prefix} Allocation', hole=0.4)
+    fig_alloc.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
+    st.plotly_chart(fig_alloc, use_container_width=True)
+    
+    fig_bar = px.bar(results_df, x='symbol', y='return_%', color='return_%', color_continuous_scale='RdYlGn', title=f'{prefix} Return %')
+    fig_bar.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 
 # --- Sidebar Controls ---
 with st.sidebar:
     st.markdown("""
     <div style="text-align:center; padding:1rem 0; margin-bottom:1rem;">
-        <div style="font-size:1.75rem; font-weight:800; color:#FFC300;">RETURNS</div>
-        <div style="color:#888; font-size:0.75rem; margin-top:0.25rem;">Portfolio Returns Tracker</div>
+        <div style="font-size:1.75rem; font-weight:800; color:#FFC300; font-family:'Outfit', sans-serif; letter-spacing:1px;">RETURNS</div>
+        <div style="color:#9CA3AF; font-size:0.75rem; margin-top:0.25rem; font-weight:500;">Portfolio Returns Tracker</div>
     </div>
     """, unsafe_allow_html=True)
     _section_divider()
 
+    st.markdown('<div class="sidebar-title">⚙️ App Mode</div>', unsafe_allow_html=True)
+    app_mode = st.radio("Select Mode", ("Single Portfolio", "Compare Portfolios"), label_visibility="collapsed")
+    st.session_state.app_mode = app_mode
+
+    _section_divider()
+
     st.markdown('<div class="sidebar-title">📂 Data Input</div>', unsafe_allow_html=True)
-    
-    # Updated to accept Excel files
-    uploaded_file = st.file_uploader(
-        "Upload Portfolio File", 
-        type=["csv", "xlsx", "xls"], 
-        help="File must be CSV or Excel and contain 'symbol', 'units', and 'value' columns."
-    )
+    if app_mode == "Single Portfolio":
+        uploaded_file = st.file_uploader("Upload Portfolio File", type=["csv", "xlsx", "xls"], key="single_up", help="Must contain 'symbol', 'units', and 'value'")
+    else:
+        uploaded_file_1 = st.file_uploader("Upload Portfolio 1", type=["csv", "xlsx", "xls"], key="comp1_up")
+        uploaded_file_2 = st.file_uploader("Upload Portfolio 2", type=["csv", "xlsx", "xls"], key="comp2_up")
 
     st.markdown('<div class="sidebar-title">🌍 Market Settings</div>', unsafe_allow_html=True)
-    market_type = st.radio(
-        "Select Market Type",
-        ("Global", "Indian"),
-        help="Select 'Indian' to append '.NS' to symbols for NSE. Enables NseKit & BSE fallbacks."
-    )
+    market_type = st.radio("Select Market Type", ("Global", "Indian"), label_visibility="collapsed")
 
     _section_divider()
 
     st.markdown('<div class="sidebar-title">📅 Valuation Date</div>', unsafe_allow_html=True)
-    date_mode = st.radio(
-        "Valuation Mode",
-        ["Live / Latest", "Historical Date"],
-        help="Choose 'Live' for current market prices or 'Historical' to check portfolio value on a specific past date."
-    )
+    date_mode = st.radio("Valuation Mode", ["Live / Latest", "Historical Date"], label_visibility="collapsed")
 
     selected_valuation_date = None
     if date_mode == "Historical Date":
-        selected_valuation_date = st.date_input(
-            "Select Date",
-            value=datetime.today() - timedelta(days=1),
-            max_value=datetime.today()
-        )
+        selected_valuation_date = st.date_input("Select Date", value=datetime.today() - timedelta(days=1), max_value=datetime.today())
 
     _section_divider()
 
-    run_button = st.button("Fetch Valuations", width='stretch', type="primary")
-    status_placeholder = st.empty() # Placeholder for success message
+    run_button = st.button("Fetch Valuations", use_container_width=True, type="primary")
+    status_placeholder = st.empty()
 
     _section_divider()
     st.markdown(f"""
-    <div class='info-box'>
-        <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
+    <div class='info-box' style='padding:1rem; text-align:center;'>
+        <p style='font-size:0.75rem; margin:0; color:var(--text-muted);'>
             <strong>Version:</strong> {VERSION}<br>
-            <strong>Engine:</strong> Multi-Source API<br>
-            <strong>Family:</strong> Hemrek Suite
+            <strong>Engine:</strong> Multi-Source API
         </p>
     </div>
     """, unsafe_allow_html=True)
+
 
 # --- Main Application Logic ---
 st.markdown(f"""
 <div class="premium-header">
-    <h1>RETURNS | Portfolio Returns Tracker</h1>
+    <h1>RETURNS</h1>
     <div class="tagline">Real-time valuation and performance tracking engine</div>
 </div>
 """, unsafe_allow_html=True)
 
-if run_button and uploaded_file is not None:
-    try:
-        # Load data based on file extension
-        if uploaded_file.name.endswith('.csv'):
-            portfolio_df = pd.read_csv(uploaded_file)
-        else:
-            portfolio_df = pd.read_excel(uploaded_file)
-        
-        # Validate required columns
-        required_cols = ['symbol', 'units', 'value']
-        
-        # Convert columns to lowercase and strip whitespace temporarily to do a robust check
-        lower_cols = [col.strip().lower() for col in portfolio_df.columns]
-        
-        if not all(col in lower_cols for col in required_cols):
-            st.error(f"File must contain the following columns: {', '.join(required_cols)}")
-        else:
-            with st.spinner("Processing portfolio data..."):
-                # Standardize column names
-                portfolio_df.columns = [col.strip().lower() for col in portfolio_df.columns]
-                
-                # Prepare DataFrame
-                portfolio = portfolio_df[['symbol', 'units', 'value']].copy()
-                portfolio.rename(columns={'value': 'original_value'}, inplace=True)
-                
-                # Sanitize numeric columns (handles comma strings e.g. "1,000" and prevents calculation crashes)
-                portfolio['units'] = pd.to_numeric(portfolio['units'].astype(str).str.replace(',', ''), errors='coerce')
-                portfolio['original_value'] = pd.to_numeric(portfolio['original_value'].astype(str).str.replace(',', ''), errors='coerce')
-                portfolio.dropna(subset=['units', 'original_value'], inplace=True)
-                
-                # Apply market logic intelligently
-                if market_type == "Indian":
-                    portfolio['ticker'] = portfolio['symbol'].astype(str).apply(
-                        lambda x: x if str(x).upper().endswith('.NS') or str(x).upper().endswith('.BO') else str(x) + ".NS"
-                    )
+if run_button:
+    target_date_arg = selected_valuation_date if date_mode == "Historical Date" else None
+    date_display = str(target_date_arg) if target_date_arg else "Latest Live"
+
+    if app_mode == "Single Portfolio":
+        if uploaded_file is not None:
+            with st.spinner(f"Processing {uploaded_file.name}..."):
+                portfolio, err = process_portfolio_file(uploaded_file, market_type, target_date_arg)
+                if err:
+                    st.error(err)
+                    st.session_state.data_loaded_single = False
                 else:
-                    portfolio['ticker'] = portfolio['symbol'].astype(str)
-                
-                tickers = portfolio['ticker'].tolist()
-
-            # Prepare Date Argument
-            target_date_arg = selected_valuation_date if date_mode == "Historical Date" else None
-            
-            # Fetch data using the multi-engine function
-            date_display = str(target_date_arg) if target_date_arg else "Latest Live"
-            toast_msg = f"Fetching prices ({date_display}) for {len(tickers)} symbols..."
-            st.toast(toast_msg, icon="⏳")
-            
-            latest_prices = fetch_prices(tickers, target_date_arg, market_type)
-            
-            if latest_prices.empty:
-                st.error("Could not fetch any data. Please check your symbols, market type, or rate limits.")
-            else:
-                portfolio['latest_price'] = portfolio['ticker'].map(latest_prices)
-                
-                # Handle failed fetches
-                failed_fetches = portfolio[portfolio['latest_price'].isna()]['symbol'].tolist()
-                if failed_fetches:
-                    st.warning(f"Could not fetch data for: {', '.join(failed_fetches)}. These will be excluded.")
-                    portfolio.dropna(subset=['latest_price'], inplace=True)
-
-                if not portfolio.empty:
-                    # Calculate returns
-                    portfolio['current_value'] = portfolio['latest_price'] * portfolio['units']
-                    portfolio['return_$'] = portfolio['current_value'] - portfolio['original_value']
-                    
-                    # Handle division by zero for free/gifted shares where original_value is 0
-                    portfolio['return_%'] = 0.0
-                    mask = portfolio['original_value'] != 0
-                    portfolio.loc[mask, 'return_%'] = (portfolio.loc[mask, 'return_$'] / portfolio.loc[mask, 'original_value']) * 100
-                    
-                    # Store in session state
-                    st.session_state.results = portfolio
-                    st.session_state.data_loaded = True
+                    st.session_state.results_single = portfolio
+                    st.session_state.data_loaded_single = True
                     st.session_state.valuation_date_label = date_display
-                    
-                    # Update status in sidebar placeholder
-                    status_placeholder.success(f"✅ Valuation Update Complete (As of {date_display})!")
+                    status_placeholder.success(f"✅ Update Complete!")
+        else:
+            st.error("Please upload a file.")
+
+    elif app_mode == "Compare Portfolios":
+        if uploaded_file_1 is not None and uploaded_file_2 is not None:
+            with st.spinner("Processing both portfolios..."):
+                p1, err1 = process_portfolio_file(uploaded_file_1, market_type, target_date_arg)
+                p2, err2 = process_portfolio_file(uploaded_file_2, market_type, target_date_arg)
+                
+                if err1 or err2:
+                    if err1: st.error(err1)
+                    if err2: st.error(err2)
+                    st.session_state.data_loaded_comp = False
                 else:
-                    st.error("No valid data to display after fetching prices.")
-                    st.session_state.data_loaded = False
-                        
-    except Exception as e:
-        st.error(f"An error occurred during processing: {e}")
-        st.session_state.data_loaded = False
+                    st.session_state.results_comp_1 = p1
+                    st.session_state.results_comp_2 = p2
+                    st.session_state.comp_names = (uploaded_file_1.name, uploaded_file_2.name)
+                    st.session_state.data_loaded_comp = True
+                    st.session_state.valuation_date_label = date_display
+                    status_placeholder.success(f"✅ Comparison Ready!")
+        else:
+            st.error("Please upload two files to compare.")
+
 
 # --- Display Results ---
-if st.session_state.data_loaded:
-    results_df = st.session_state.results
-
-    # --- Portfolio Level Cards ---
-    total_original_value = results_df['original_value'].sum()
-    total_current_value = results_df['current_value'].sum()
-    total_return_dollar = results_df['return_$'].sum()
-
-    # Avoid division by zero
-    if total_original_value != 0:
-        total_return_percent = (total_return_dollar / total_original_value) * 100
-    else:
-        total_return_percent = 0.0
-
-    # Determine P/L Color class
-    if total_return_dollar > 0:
-        pl_class = "success"
-    elif total_return_dollar < 0:
-        pl_class = "danger"
-    else:
-        pl_class = "neutral"
-
-    # Top metrics strip
-    mc1, mc2, mc3, mc4 = st.columns(4)
-    with mc1:
-        st.markdown(_metric_card("Original Investment", f"${total_original_value:,.2f}", "Initial Capital Deployed", "primary"), unsafe_allow_html=True)
-    with mc2:
+if st.session_state.app_mode == "Single Portfolio":
+    if st.session_state.data_loaded_single:
+        results_df = st.session_state.results_single
         date_label = st.session_state.valuation_date_label
-        st.markdown(_metric_card(f"Valuation ({date_label})", f"${total_current_value:,.2f}", "Market Value at selected date", "info"), unsafe_allow_html=True)
-    with mc3:
-        st.markdown(_metric_card("Total P/L", f"${total_return_dollar:,.2f}", f"{total_return_percent:,.2f}% Return", pl_class), unsafe_allow_html=True)
-    with mc4:
-        num_positions = len(results_df)
-        st.markdown(_metric_card("Positions", str(num_positions), "Active holdings", "neutral"), unsafe_allow_html=True)
 
-    _section_divider()
-
-    # --- Symbol Level Table ---
-    tab1, tab2 = st.tabs(["**Detailed Holdings**", "**Visual Analysis**"])
-
-    with tab1:
-        st.markdown(_section_header(
-            "Symbol Level Returns",
-            f"{len(results_df)} positions · performance breakdown"
-        ), unsafe_allow_html=True)
-
-        display_df = results_df[[
-            'symbol',
-            'units',
-            'original_value',
-            'latest_price',
-            'current_value',
-            'return_$',
-            'return_%'
-        ]].copy()
-
-        # Rename columns for display
-        display_df = display_df.rename(columns={
-            'symbol': 'Symbol',
-            'units': 'Units',
-            'original_value': 'Original Value ($)',
-            'latest_price': 'Latest Price ($)',
-            'current_value': 'Current Value ($)',
-            'return_$': 'P/L ($)',
-            'return_%': 'P/L (%)'
-        })
-
-        # We use st.dataframe but in a container styled by the CSS above
-        st.dataframe(
-            display_df.style
-            .format({
-                'Original Value ($)': '${:,.2f}',
-                'Latest Price ($)': '${:,.2f}',
-                'Current Value ($)': '${:,.2f}',
-                'P/L ($)': '${:,.2f}',
-                'P/L (%)': '{:,.2f}%',
-                'Units': '{:,.2f}'
-            })
-            .background_gradient(
-                cmap='RdYlGn',
-                subset=['P/L (%)'],
-                vmin=-10,
-                vmax=10
-            ),
-            use_container_width=True,
-            height=500
-        )
-
+        render_portfolio_metrics_wide(results_df, date_label)
         _section_divider()
 
-        # CSV Download
-        first_cols = ['Symbol', 'Units', 'Original Value ($)']
-        other_cols = [c for c in display_df.columns if c not in first_cols]
-        download_df = display_df[first_cols + other_cols]
-        buf = io.BytesIO()
-        download_df.to_csv(buf, index=False, encoding="utf-8-sig")
-        st.download_button(
-            label="Download Portfolio CSV",
-            data=buf.getvalue(),
-            file_name=f"returns_portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            width='stretch',
-            key="returns_csv_download",
-        )
+        tab1, tab2 = st.tabs(["**Detailed Holdings**", "**Visual Analysis**"])
+        with tab1:
+            st.markdown(_section_header("Symbol Level Returns", "performance breakdown"), unsafe_allow_html=True)
+            render_portfolio_tables(results_df)
+            
+            buf = io.BytesIO()
+            results_df.to_csv(buf, index=False, encoding="utf-8-sig")
+            st.download_button("Download CSV", data=buf.getvalue(), file_name="returns_single.csv", mime="text/csv", use_container_width=True)
+            
+        with tab2:
+            st.markdown(_section_header("Performance Visualization", "allocation and returns"), unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                fig_alloc = px.pie(results_df, values='current_value', names='symbol', title='Allocation', hole=0.4)
+                fig_alloc.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_alloc, use_container_width=True)
+            with c2:
+                fig_bar = px.bar(results_df, x='symbol', y='return_%', color='return_%', color_continuous_scale='RdYlGn', title='Return %')
+                fig_bar.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_bar, use_container_width=True)
+    else:
+        st.markdown("""<div class='info-box'><h4>Welcome</h4><p>Upload a CSV/Excel file, select settings, and fetch valuations.</p></div>""", unsafe_allow_html=True)
 
-    with tab2:
-        st.markdown(_section_header(
-            "Performance Visualization",
-            "Portfolio allocation and returns analysis"
-        ), unsafe_allow_html=True)
+elif st.session_state.app_mode == "Compare Portfolios":
+    if st.session_state.data_loaded_comp:
+        r1 = st.session_state.results_comp_1
+        r2 = st.session_state.results_comp_2
+        n1, n2 = st.session_state.comp_names
+        date_label = st.session_state.valuation_date_label
 
-        col_viz1, col_viz2 = st.columns(2)
+        st.markdown(_section_header("Side-by-Side Comparison", f"Valuation Date: {date_label}"), unsafe_allow_html=True)
 
-        with col_viz1:
-             fig_alloc = px.pie(
-                 results_df,
-                 values='current_value',
-                 names='symbol',
-                 title='Portfolio Allocation (Current Value)',
-                 hole=0.4
-             )
-             fig_alloc.update_layout(template='plotly_dark')
-             st.plotly_chart(fig_alloc, use_container_width=True)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"<h3 style='text-align:center; color:var(--primary-color); font-family:Outfit;'>{n1}</h3>", unsafe_allow_html=True)
+            render_portfolio_metrics(r1, date_label)
+            st.markdown("<br>", unsafe_allow_html=True)
+            render_portfolio_tables(r1)
+            render_portfolio_charts(r1)
+            
+        with col2:
+            st.markdown(f"<h3 style='text-align:center; color:var(--info-cyan); font-family:Outfit;'>{n2}</h3>", unsafe_allow_html=True)
+            render_portfolio_metrics(r2, date_label)
+            st.markdown("<br>", unsafe_allow_html=True)
+            render_portfolio_tables(r2)
+            render_portfolio_charts(r2)
 
-        with col_viz2:
-             fig_bar = px.bar(
-                 results_df,
-                 x='symbol',
-                 y='return_%',
-                 color='return_%',
-                 color_continuous_scale='RdYlGn',
-                 title='Return % by Symbol'
-             )
-             fig_bar.update_layout(template='plotly_dark')
-             st.plotly_chart(fig_bar, use_container_width=True)
-
-else:
-    # --- Welcome State (Matches Pragyam style) ---
-    st.markdown("""
-    <div class='info-box welcome'>
-        <h4>Welcome to the Portfolio Returns Tracker</h4>
-        <p>
-            This module allows you to track the real-time or historical performance of your portfolios.
-            It uses market data to compute valuations against your original cost basis.
-        </p>
-        <strong>To begin, please follow these steps:</strong>
-        <ol style="margin-left: 20px; margin-top: 10px;">
-            <li>Prepare a <strong>CSV or Excel file</strong> with columns: <code>symbol</code>, <code>units</code>, <code>value</code> (original cost).</li>
-            <li>Upload the file in the sidebar configuration panel.</li>
-            <li>Select the <strong>Market Type</strong> (Global or Indian).</li>
-            <li>Choose <strong>Valuation Mode</strong> (Live for today, or Historical for a past date).</li>
-            <li>Click <strong>Fetch Valuations</strong>.</li>
-        </ol>
-    </div>
-    """, unsafe_allow_html=True)
-
-    _section_divider()
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown("""<div class='metric-card info'><h4>FLEXIBLE DATA</h4><h2>Time Travel</h2>
-        <div class='sub-metric'>Live or Historical Valuations</div></div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown("""<div class='metric-card success'><h4>INSTANT</h4><h2>P/L Analysis</h2>
-        <div class='sub-metric'>Automatic Calculation</div></div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown("""<div class='metric-card primary'><h4>VISUAL</h4><h2>Insights</h2>
-        <div class='sub-metric'>Interactive Charts</div></div>""", unsafe_allow_html=True)
-    with c4:
-        st.markdown("""<div class='metric-card warning'><h4>GLOBAL</h4><h2>Markets</h2>
-        <div class='sub-metric'>Multiple exchanges</div></div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""<div class='info-box'><h4>Compare Mode</h4><p>Upload two different portfolio CSVs to compare them side-by-side.</p></div>""", unsafe_allow_html=True)
 
 # --- Footer ---
 _section_divider()
