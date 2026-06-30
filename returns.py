@@ -225,23 +225,23 @@ def get_macro_metrics(results_df, date_label):
     pl_class = "success" if total_return_dollar > 0 else "danger" if total_return_dollar < 0 else "neutral"
 
     return [
-        {"label": "Original", "value": f"${total_original_value:,.2f}", "delta": "Capital Deployed", "kind": "primary"},
-        {"label": f"Valuation", "value": f"${total_current_value:,.2f}", "delta": f"As of {date_label}", "kind": "info"},
-        {"label": "Total P/L", "value": f"${total_return_dollar:,.2f}", "delta": f"{total_return_percent:,.2f}%", "kind": pl_class},
+        {"label": "Original", "value": f"{total_original_value:,.2f}", "delta": "Capital Deployed", "kind": "primary"},
+        {"label": f"Valuation", "value": f"{total_current_value:,.2f}", "delta": f"As of {date_label}", "kind": "info"},
+        {"label": "Total P/L", "value": f"{total_return_percent:,.2f}%", "delta": f"{total_return_dollar:,.2f}", "kind": pl_class},
         {"label": "Positions", "value": str(len(results_df)), "delta": "Active holdings", "kind": "neutral"},
     ]
 
 
 def render_portfolio_tables(results_df):
     display_df = results_df[['symbol', 'units', 'original_value', 'latest_price', 'current_value', 'return_$', 'return_%']].copy()
-    display_df = display_df.rename(columns={'symbol': 'Symbol', 'units': 'Units', 'original_value': 'Orig Val ($)', 'latest_price': 'Price ($)', 'current_value': 'Curr Val ($)', 'return_$': 'P/L ($)', 'return_%': 'P/L (%)'})
+    display_df = display_df.rename(columns={'symbol': 'Symbol', 'units': 'Units', 'original_value': 'Orig Val', 'latest_price': 'Price', 'current_value': 'Curr Val', 'return_$': 'P/L', 'return_%': 'P/L (%)'})
     
     st.dataframe(
         display_df.style.format({
-            'Orig Val ($)': '${:,.2f}', 
-            'Price ($)': '${:,.2f}', 
-            'Curr Val ($)': '${:,.2f}', 
-            'P/L ($)': '${:,.2f}', 
+            'Orig Val': '{:,.2f}', 
+            'Price': '{:,.2f}', 
+            'Curr Val': '{:,.2f}', 
+            'P/L': '{:,.2f}', 
             'P/L (%)': '{:,.2f}%', 
             'Units': '{:,.2f}'
         }).background_gradient(cmap='RdYlGn', subset=['P/L (%)'], vmin=-10, vmax=10), 
@@ -391,26 +391,16 @@ elif st.session_state.app_mode == "Compare Portfolios":
         with col1:
             st.markdown(f"<h3 style='text-align:center; color:var(--amber); font-family:var(--display); padding-bottom:1rem;'>{n1}</h3>", unsafe_allow_html=True)
             m1 = get_macro_metrics(r1, date_label)
-            # Create a 2x2 grid for the 4 metrics inside this column
-            mc1, mc2 = st.columns(2)
-            with mc1:
-                components.render_metric_card(m1[0]['label'], m1[0]['value'], m1[0]['delta'], m1[0]['kind'])
-                components.render_metric_card(m1[2]['label'], m1[2]['value'], m1[2]['delta'], m1[2]['kind'])
-            with mc2:
-                components.render_metric_card(m1[1]['label'], m1[1]['value'], m1[1]['delta'], m1[1]['kind'])
-                components.render_metric_card(m1[3]['label'], m1[3]['value'], m1[3]['delta'], m1[3]['kind'])
+            # Create a 2x2 grid for the 4 metrics using render_metric_row
+            components.render_metric_row([m1[0], m1[1]])
+            components.render_metric_row([m1[2], m1[3]])
                 
         with col2:
             st.markdown(f"<h3 style='text-align:center; color:var(--cyan); font-family:var(--display); padding-bottom:1rem;'>{n2}</h3>", unsafe_allow_html=True)
             m2 = get_macro_metrics(r2, date_label)
-            # Create a 2x2 grid for the 4 metrics inside this column
-            mc3, mc4 = st.columns(2)
-            with mc3:
-                components.render_metric_card(m2[0]['label'], m2[0]['value'], m2[0]['delta'], m2[0]['kind'])
-                components.render_metric_card(m2[2]['label'], m2[2]['value'], m2[2]['delta'], m2[2]['kind'])
-            with mc4:
-                components.render_metric_card(m2[1]['label'], m2[1]['value'], m2[1]['delta'], m2[1]['kind'])
-                components.render_metric_card(m2[3]['label'], m2[3]['value'], m2[3]['delta'], m2[3]['kind'])
+            # Create a 2x2 grid for the 4 metrics using render_metric_row
+            components.render_metric_row([m2[0], m2[1]])
+            components.render_metric_row([m2[2], m2[3]])
 
         # 2. Tabular Data Interleaved Section
         components.render_section_header("Holdings Comparison", "Side-by-side data table breakdown", icon="grid", accent="emerald")
