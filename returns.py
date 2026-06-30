@@ -83,8 +83,21 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
             for t, sym in clean_symbols.items():
                 fetched = False
                 try:
-                    # Attempt standard NseKit / NseTools methods
-                    if hasattr(nse, 'equity_live_stock_info'):
+                    # Attempt standard NseKit methods
+                    if hasattr(nse, 'cm_live_equity_price_info'):
+                        info = nse.cm_live_equity_price_info(sym)
+                        if isinstance(info, dict) and 'LastTradedPrice' in info:
+                            prices[t] = float(info['LastTradedPrice'])
+                            fetched = True
+                    
+                    if not fetched and hasattr(nse, 'cm_live_equity_info'):
+                        info = nse.cm_live_equity_info(sym)
+                        if isinstance(info, dict) and 'priceInfo' in info:
+                            prices[t] = float(info['priceInfo'].get('lastPrice', 0))
+                            fetched = True
+
+                    # Fallback in case user is actually using nsetools
+                    if not fetched and hasattr(nse, 'equity_live_stock_info'):
                         info = nse.equity_live_stock_info(sym)
                         if isinstance(info, dict) and 'priceInfo' in info:
                             prices[t] = float(info['priceInfo'].get('lastPrice', 0))
@@ -114,10 +127,21 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                 still_missing = []
                 for t, sym in clean_symbols.items():
                     try:
-                        info = equity.stock_info(sym)
-                        if isinstance(info, dict) and 'LTP' in info:
-                            prices[t] = float(info['LTP'])
-                        else:
+                        # Try historical_stock_data (for 1D) since stock_info lacks LTP
+                        fetched = False
+                        if hasattr(equity, 'historical_stock_data'):
+                            info = equity.historical_stock_data(sym, period='1D')
+                            if info is not None and not info.empty:
+                                prices[t] = float(info['Close'].iloc[-1])
+                                fetched = True
+                        
+                        if not fetched:
+                            info = equity.stock_info(sym)
+                            if isinstance(info, dict) and 'LTP' in info:
+                                prices[t] = float(info['LTP'])
+                                fetched = True
+
+                        if not fetched:
                             still_missing.append(t)
                     except Exception:
                         still_missing.append(t)
