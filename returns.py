@@ -387,20 +387,38 @@ elif st.session_state.app_mode == "Compare Portfolios":
 
         # 1. Macro Metrics Interleaved Section
         components.render_section_header("Macro Comparison", "Top-level portfolio summary metrics", icon="activity", accent="amber")
-        col1, col2 = st.columns(2)
-        with col1:
+        
+        # Headers for the two portfolios
+        h1, h2 = st.columns(2)
+        with h1:
             st.markdown(f"<h3 style='text-align:center; color:var(--amber); font-family:var(--display); padding-bottom:1rem;'>{n1}</h3>", unsafe_allow_html=True)
-            m1 = get_macro_metrics(r1, date_label)
-            # Create a 2x2 grid for the 4 metrics using render_metric_row
-            components.render_metric_row([m1[0], m1[1]])
-            components.render_metric_row([m1[2], m1[3]])
-                
-        with col2:
+        with h2:
             st.markdown(f"<h3 style='text-align:center; color:var(--cyan); font-family:var(--display); padding-bottom:1rem;'>{n2}</h3>", unsafe_allow_html=True)
-            m2 = get_macro_metrics(r2, date_label)
-            # Create a 2x2 grid for the 4 metrics using render_metric_row
-            components.render_metric_row([m2[0], m2[1]])
-            components.render_metric_row([m2[2], m2[3]])
+
+        m1 = get_macro_metrics(r1, date_label)
+        m2 = get_macro_metrics(r2, date_label)
+
+        # Flat row 1 to prevent nested column stacking (P1-0, P1-1 | P2-0, P2-1)
+        r1_c1, r1_c2, r1_c3, r1_c4 = st.columns(4)
+        with r1_c1:
+            components.render_metric_card(m1[0]['label'], m1[0]['value'], m1[0]['delta'], m1[0]['kind'])
+        with r1_c2:
+            components.render_metric_card(m1[1]['label'], m1[1]['value'], m1[1]['delta'], m1[1]['kind'])
+        with r1_c3:
+            components.render_metric_card(m2[0]['label'], m2[0]['value'], m2[0]['delta'], m2[0]['kind'])
+        with r1_c4:
+            components.render_metric_card(m2[1]['label'], m2[1]['value'], m2[1]['delta'], m2[1]['kind'])
+
+        # Flat row 2 to prevent nested column stacking (P1-2, P1-3 | P2-2, P2-3)
+        r2_c1, r2_c2, r2_c3, r2_c4 = st.columns(4)
+        with r2_c1:
+            components.render_metric_card(m1[2]['label'], m1[2]['value'], m1[2]['delta'], m1[2]['kind'])
+        with r2_c2:
+            components.render_metric_card(m1[3]['label'], m1[3]['value'], m1[3]['delta'], m1[3]['kind'])
+        with r2_c3:
+            components.render_metric_card(m2[2]['label'], m2[2]['value'], m2[2]['delta'], m2[2]['kind'])
+        with r2_c4:
+            components.render_metric_card(m2[3]['label'], m2[3]['value'], m2[3]['delta'], m2[3]['kind'])
 
         # 2. Tabular Data Interleaved Section
         components.render_section_header("Holdings Comparison", "Side-by-side data table breakdown", icon="grid", accent="emerald")
