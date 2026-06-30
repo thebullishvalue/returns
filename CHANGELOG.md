@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.1.0] — 2026-06-30
+
+### Added
+- **Compare Portfolios Mode**: Ability to upload and compare two distinct portfolio CSVs side-by-side.
+- Robust data fetching fallbacks specifically for Indian markets (`NseKit`, `bseindia`, `bsedata`) mimicking the `Swing` infrastructure.
+- Complete integration of the **Swing Obsidian Quant Terminal** UI/UX module (`ui` package).
+
+### Changed
+- Refactored `returns.py` to use `ui.theme` and `ui.components` (Swing's Obsidian Quant design).
+- Restructured Single Portfolio layout into strict tabs (`Performance Snapshot`, `Detailed Holdings`).
+- Redesigned "Compare Portfolios" mode using a hierarchical horizontal grid (Macro Metrics -> Tables -> Charts).
+- Replaced custom `style.css` with Swing's `theme.css`.
+
+### Removed
+- Legacy glassmorphism styling and unstructured grid layouts.
+- Replaced the hardcoded Sanskrit "Swing" watermark from the inherited header CSS to match "Returns".
+
+---
+
 ## [v1.3.0] — 2026-04-05
 
 ### Added

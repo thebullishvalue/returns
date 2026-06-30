@@ -17,7 +17,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-VERSION = "v3.0.0 - Returns Engine (Swing UI)"
+VERSION = "v3.1.0 - Returns Engine (Swing UI Layout)"
 
 # Inject Obsidian Quant Terminal CSS
 theme.inject_css()
@@ -41,23 +41,13 @@ if 'comp_names' not in st.session_state:
     st.session_state.comp_names = ("Portfolio 1", "Portfolio 2")
 
 # --- Helper Function ---
-@st.cache_data(ttl=600) # Cache data for 10 minutes
+@st.cache_data(ttl=600)
 def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Series:
-    """
-    Fetches closing prices.
-    If target_date is None, fetches latest available (live/recent close).
-    If target_date is provided, fetches the close on that date (or most recent trading day before it).
-    Includes robust fallbacks for Indian markets (NseKit, BSE) to handle yfinance rate limits.
-    """
     prices = pd.Series(dtype=float)
-    
-    # --- 1. Primary Engine: yfinance ---
     try:
         if target_date is None:
-            # Live/Latest logic: Fetch last 5 days to ensure coverage over weekends/holidays
             data = yf.download(tickers, period="5d", progress=False)
         else:
-            # Historical logic: Window ending on target_date + 1 (exclusive)
             end_dt = target_date + timedelta(days=1)
             start_dt = target_date - timedelta(days=10)
             data = yf.download(tickers, start=start_dt, end=end_dt, progress=False)
@@ -67,29 +57,21 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                 close_prices = data['Close']
                 if not close_prices.empty:
                     if len(tickers) == 1:
-                        # close_prices is a Series (dates as index)
                         valid_prices = close_prices.dropna()
                         if not valid_prices.empty:
                             last_price = float(valid_prices.iloc[-1])
                             prices = pd.Series(data=[last_price], index=[tickers[0]])
                     else:
-                        # close_prices is a DataFrame (dates as index, tickers as columns)
-                        # ffill() carries the last valid close price forward to handle midnight/pre-market NaNs
                         prices = close_prices.ffill().iloc[-1].dropna()
             except KeyError:
                 pass
-    except Exception as e:
-        # Silent fail for yfinance so it can gracefully move to fallbacks
+    except Exception:
         pass
 
-    # Identify missing/failed tickers
     missing_tickers = [t for t in tickers if t not in prices.index or pd.isna(prices.get(t))]
 
-    # --- 2. Fallback Engines (Indian Market only, typically for Live Data) ---
     if missing_tickers and market_type == "Indian" and target_date is None:
         clean_symbols = {t: t.replace('.NS', '').replace('.BO', '') for t in missing_tickers}
-        
-        # --- Fallback 1: NseKit (Batch/Concurrent Fetching) ---
         still_missing = []
         try:
             import NseKit
@@ -106,19 +88,16 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                         if isinstance(info, dict) and 'LastTradedPrice' in info:
                             price = float(info['LastTradedPrice'])
                             fetched = True
-                    
                     if not fetched and hasattr(nse, 'cm_live_equity_info'):
                         info = nse.cm_live_equity_info(sym)
                         if isinstance(info, dict) and 'priceInfo' in info:
                             price = float(info['priceInfo'].get('lastPrice', 0))
                             fetched = True
-
                     if not fetched and hasattr(nse, 'equity_live_stock_info'):
                         info = nse.equity_live_stock_info(sym)
                         if isinstance(info, dict) and 'priceInfo' in info:
                             price = float(info['priceInfo'].get('lastPrice', 0))
                             fetched = True
-                    
                     if not fetched and hasattr(nse, 'get_quote'):
                         info = nse.get_quote(sym)
                         if isinstance(info, dict):
@@ -136,12 +115,10 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                         prices[t] = price
                     else:
                         still_missing.append(t)
-                        
             clean_symbols = {t: clean_symbols[t] for t in still_missing}
         except ImportError:
             pass
 
-        # --- Fallback 2: BSE (bseindia & bsedata) ---
         if clean_symbols:
             try:
                 from bseindia import equity
@@ -154,13 +131,11 @@ def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Se
                             if info is not None and not info.empty:
                                 prices[t] = float(info['Close'].iloc[-1])
                                 fetched = True
-                        
                         if not fetched:
                             info = equity.stock_info(sym)
                             if isinstance(info, dict) and 'LTP' in info:
                                 prices[t] = float(info['LTP'])
                                 fetched = True
-
                         if not fetched:
                             still_missing.append(t)
                     except Exception:
@@ -242,38 +217,20 @@ def process_portfolio_file(uploaded_file, market_type, target_date_arg):
         return None, f"An error occurred for {uploaded_file.name}: {e}"
 
 
-def render_portfolio_metrics(results_df, date_label):
+def get_macro_metrics(results_df, date_label):
     total_original_value = results_df['original_value'].sum()
     total_current_value = results_df['current_value'].sum()
     total_return_dollar = results_df['return_$'].sum()
     total_return_percent = (total_return_dollar / total_original_value) * 100 if total_original_value != 0 else 0.0
     pl_class = "success" if total_return_dollar > 0 else "danger" if total_return_dollar < 0 else "neutral"
 
-    # Make smaller columns inside columns for compact compare view
-    c1, c2 = st.columns(2)
-    with c1:
-        components.render_metric_card("Original", f"${total_original_value:,.2f}", "Capital Deployed", "primary")
-        components.render_metric_card("Total P/L", f"${total_return_dollar:,.2f}", f"{total_return_percent:,.2f}%", pl_class)
-    with c2:
-        components.render_metric_card(f"Valuation ({date_label})", f"${total_current_value:,.2f}", "Market Value", "info")
-        components.render_metric_card("Positions", str(len(results_df)), "Active holdings", "neutral")
-
-    return total_return_dollar, total_return_percent
-
-def render_portfolio_metrics_wide(results_df, date_label):
-    total_original_value = results_df['original_value'].sum()
-    total_current_value = results_df['current_value'].sum()
-    total_return_dollar = results_df['return_$'].sum()
-    total_return_percent = (total_return_dollar / total_original_value) * 100 if total_original_value != 0 else 0.0
-    pl_class = "success" if total_return_dollar > 0 else "danger" if total_return_dollar < 0 else "neutral"
-
-    metrics = [
+    return [
         {"label": "Original", "value": f"${total_original_value:,.2f}", "delta": "Capital Deployed", "kind": "primary"},
-        {"label": f"Valuation ({date_label})", "value": f"${total_current_value:,.2f}", "delta": "Market Value", "kind": "info"},
+        {"label": f"Valuation", "value": f"${total_current_value:,.2f}", "delta": f"As of {date_label}", "kind": "info"},
         {"label": "Total P/L", "value": f"${total_return_dollar:,.2f}", "delta": f"{total_return_percent:,.2f}%", "kind": pl_class},
         {"label": "Positions", "value": str(len(results_df)), "delta": "Active holdings", "kind": "neutral"},
     ]
-    components.render_metric_row(metrics)
+
 
 def render_portfolio_tables(results_df):
     display_df = results_df[['symbol', 'units', 'original_value', 'latest_price', 'current_value', 'return_$', 'return_%']].copy()
@@ -398,21 +355,26 @@ if st.session_state.app_mode == "Single Portfolio":
         results_df = st.session_state.results_single
         date_label = st.session_state.valuation_date_label
 
-        render_portfolio_metrics_wide(results_df, date_label)
-        st.divider()
+        # Top-Level Macro View (Matches Swing Dashboard Structure)
+        metrics = get_macro_metrics(results_df, date_label)
+        components.render_metric_row(metrics)
 
-        tab1, tab2 = st.tabs(["**Detailed Holdings**", "**Visual Analysis**"])
+        # Tabulated Hierarchy
+        st.markdown("<br>", unsafe_allow_html=True)
+        tab1, tab2 = st.tabs(["Performance Snapshot", "Detailed Holdings"])
+        
         with tab1:
-            components.render_section_header("Symbol Level Returns", "performance breakdown", icon="briefcase", accent="emerald")
+            components.render_section_header("Visual Analytics", "Portfolio allocation and performance returns", icon="chart", accent="emerald")
+            render_portfolio_charts(results_df)
+
+        with tab2:
+            components.render_section_header("Symbol Level Returns", "Data breakdown and detailed metrics", icon="database", accent="cyan")
             render_portfolio_tables(results_df)
             
             buf = io.BytesIO()
             results_df.to_csv(buf, index=False, encoding="utf-8-sig")
             st.download_button("Download CSV", data=buf.getvalue(), file_name="returns_single.csv", mime="text/csv", use_container_width=True)
-            
-        with tab2:
-            components.render_section_header("Performance Visualization", "returns analysis", icon="chart", accent="cyan")
-            render_portfolio_charts(results_df)
+
     else:
         components.render_info_box("Welcome", "Upload a CSV/Excel file, select settings, and fetch valuations.", color="cyan")
 
@@ -423,23 +385,48 @@ elif st.session_state.app_mode == "Compare Portfolios":
         n1, n2 = st.session_state.comp_names
         date_label = st.session_state.valuation_date_label
 
-        components.render_section_header("Side-by-Side Comparison", f"Valuation Date: {date_label}", icon="layers", accent="amber")
-
+        # 1. Macro Metrics Interleaved Section
+        components.render_section_header("Macro Comparison", "Top-level portfolio summary metrics", icon="activity", accent="amber")
         col1, col2 = st.columns(2)
-        
         with col1:
             st.markdown(f"<h3 style='text-align:center; color:var(--amber); font-family:var(--display); padding-bottom:1rem;'>{n1}</h3>", unsafe_allow_html=True)
-            render_portfolio_metrics(r1, date_label)
-            st.markdown("<br>", unsafe_allow_html=True)
-            render_portfolio_tables(r1)
-            render_portfolio_charts(r1)
-            
+            m1 = get_macro_metrics(r1, date_label)
+            # Create a 2x2 grid for the 4 metrics inside this column
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                components.render_metric_card(m1[0]['label'], m1[0]['value'], m1[0]['delta'], m1[0]['kind'])
+                components.render_metric_card(m1[2]['label'], m1[2]['value'], m1[2]['delta'], m1[2]['kind'])
+            with mc2:
+                components.render_metric_card(m1[1]['label'], m1[1]['value'], m1[1]['delta'], m1[1]['kind'])
+                components.render_metric_card(m1[3]['label'], m1[3]['value'], m1[3]['delta'], m1[3]['kind'])
+                
         with col2:
             st.markdown(f"<h3 style='text-align:center; color:var(--cyan); font-family:var(--display); padding-bottom:1rem;'>{n2}</h3>", unsafe_allow_html=True)
-            render_portfolio_metrics(r2, date_label)
-            st.markdown("<br>", unsafe_allow_html=True)
+            m2 = get_macro_metrics(r2, date_label)
+            # Create a 2x2 grid for the 4 metrics inside this column
+            mc3, mc4 = st.columns(2)
+            with mc3:
+                components.render_metric_card(m2[0]['label'], m2[0]['value'], m2[0]['delta'], m2[0]['kind'])
+                components.render_metric_card(m2[2]['label'], m2[2]['value'], m2[2]['delta'], m2[2]['kind'])
+            with mc4:
+                components.render_metric_card(m2[1]['label'], m2[1]['value'], m2[1]['delta'], m2[1]['kind'])
+                components.render_metric_card(m2[3]['label'], m2[3]['value'], m2[3]['delta'], m2[3]['kind'])
+
+        # 2. Tabular Data Interleaved Section
+        components.render_section_header("Holdings Comparison", "Side-by-side data table breakdown", icon="grid", accent="emerald")
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            render_portfolio_tables(r1)
+        with tc2:
             render_portfolio_tables(r2)
-            render_portfolio_charts(r2)
+
+        # 3. Visual Charts Interleaved Section
+        components.render_section_header("Performance Comparison", "Visual analytics on return metrics", icon="chart", accent="cyan")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            render_portfolio_charts(r1, prefix=f"{n1}")
+        with cc2:
+            render_portfolio_charts(r2, prefix=f"{n2}")
 
     else:
         components.render_info_box("Compare Mode", "Upload two different portfolio CSVs to compare them side-by-side.", color="amber")

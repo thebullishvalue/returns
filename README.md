@@ -8,12 +8,13 @@ Part of the **Hemrek Capital** product family. Built with Streamlit and powered 
 
 ## Features
 
+- **Compare Portfolios Mode** — Upload and compare two different portfolios side-by-side
 - **Live & Historical Valuations** — Track portfolio performance at current market prices or on any historical date
 - **Multi-Market Support** — Global markets or Indian NSE (automatic `.NS` ticker suffix)
 - **Instant P/L Analysis** — Automatic calculation of returns in dollars and percentages
-- **Interactive Visualizations** — Pie charts for allocation, bar charts for returns distribution
+- **Interactive Visualizations** — Performance distribution bar charts powered by Plotly
 - **CSV Export** — Download portfolio holdings with formatted valuations
-- **Dark Theme UI** — Professional interface with gold accent design system
+- **Obsidian Quant UI** — Premium institutional research terminal aesthetic synchronized with the Swing system
 
 ---
 
@@ -104,7 +105,10 @@ Click **"Fetch Valuations"** to retrieve market data and compute returns.
 ```
 returns-main/
 ├── returns.py          # Main application (entry point)
-├── style.css           # Design system CSS (dark theme, gold accent)
+├── ui/                 # Swing Obsidian Quant Terminal UI module
+│   ├── components.py
+│   ├── theme.css
+│   └── theme.py
 ├── requirements.txt    # Python dependencies
 ├── .gitignore          # Git ignore rules
 └── README.md           # This file
@@ -125,19 +129,19 @@ Market data is cached for **10 minutes** to minimize API calls and improve perfo
 
 ## Design System
 
-The UI follows the **Hemrek Capital Design System** — a dark theme with gold primary accent (`#FFC300`), consistent across all Hemrek Capital products including Pragyam (Portfolio Intelligence).
+The UI strictly adheres to the **Obsidian Quant Terminal** design system shared with the `Swing` application — an institutional research terminal aesthetic.
 
 **Key design principles:**
-- Clean, minimal interface with semantic color coding
-- Responsive layout with hover animations
-- Professional typography (Inter font family)
-- Accessible contrast and visual hierarchy
+- Premium Obsidian `#0A0E17` canvas with Amber Gold `#D4A853` accents
+- Hierarchical horizontal grids grouping metrics, tables, and charts
+- Typography built on Syne (Display) and JetBrains Mono (Data)
+- Frameless glassmorphic panels with subtle glowing borders
 
 ---
 
 ## Version
 
-**Current Version:** v1.3.0
+**Current Version:** v3.1.0
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release history.
 
