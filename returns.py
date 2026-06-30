@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-VERSION = "v1.3.1 - Returns Engine" # Bumped version for Excel support
+VERSION = "v1.4.0 - Returns Engine (Fallbacks Enabled)" # Bumped version for Fallbacks
 
 # Load CSS from external file
 _css_path = os.path.join(os.path.dirname(__file__), "style.css")
@@ -33,50 +33,114 @@ if 'valuation_date_label' not in st.session_state:
 
 # --- Helper Function ---
 @st.cache_data(ttl=600) # Cache data for 10 minutes
-def fetch_prices(tickers: list, target_date=None) -> pd.Series:
+def fetch_prices(tickers: list, target_date=None, market_type="Global") -> pd.Series:
     """
     Fetches closing prices.
     If target_date is None, fetches latest available (live/recent close).
     If target_date is provided, fetches the close on that date (or most recent trading day before it).
+    Includes robust fallbacks for Indian markets (NseKit, BSE) to handle yfinance rate limits.
     """
+    prices = pd.Series(dtype=float)
+    
+    # --- 1. Primary Engine: yfinance ---
     try:
         if target_date is None:
             # Live/Latest logic: Fetch last 5 days to ensure coverage over weekends/holidays
             data = yf.download(tickers, period="5d", progress=False)
         else:
             # Historical logic: Window ending on target_date + 1 (exclusive)
-            # Look back 10 days to ensure we find a trading day
             end_dt = target_date + timedelta(days=1)
             start_dt = target_date - timedelta(days=10)
             data = yf.download(tickers, start=start_dt, end=end_dt, progress=False)
 
-        if data.empty:
-            return pd.Series(dtype=float)
-
-        # Get the 'Close' prices
-        # Handle cases where columns might be multi-level if yfinance version varies
-        try:
-            close_prices = data['Close']
-        except KeyError:
-            return pd.Series(dtype=float)
-
-        if close_prices.empty:
-             return pd.Series(dtype=float)
-
-        if len(tickers) == 1:
-            # If single ticker, close_prices is a Series (Index=Date)
-            # We return a Series with index=[Ticker] and value=Price to ensure it maps correctly
-            last_price = close_prices.iloc[-1]
-            return pd.Series(data=[last_price], index=[tickers[0]])
-
-        # For multiple tickers, close_prices is a DataFrame (Index=Date, Columns=Tickers)
-        # Get the last row (most recent date in the range)
-        latest_prices = close_prices.iloc[-1]
-        return latest_prices
-
+        if not data.empty:
+            try:
+                close_prices = data['Close']
+                if not close_prices.empty:
+                    if len(tickers) == 1:
+                        last_price = float(close_prices.iloc[-1])
+                        prices = pd.Series(data=[last_price], index=[tickers[0]])
+                    else:
+                        prices = close_prices.iloc[-1].dropna()
+            except KeyError:
+                pass
     except Exception as e:
-        st.error(f"Error fetching data from yfinance: {e}")
-        return pd.Series(dtype=float)
+        # Silent fail for yfinance so it can gracefully move to fallbacks
+        pass
+
+    # Identify missing/failed tickers
+    missing_tickers = [t for t in tickers if t not in prices.index or pd.isna(prices.get(t))]
+
+    # --- 2. Fallback Engines (Indian Market only, typically for Live Data) ---
+    if missing_tickers and market_type == "Indian" and target_date is None:
+        clean_symbols = {t: t.replace('.NS', '').replace('.BO', '') for t in missing_tickers}
+        
+        # --- Fallback 1: NseKit ---
+        still_missing = []
+        try:
+            import NseKit
+            nse = NseKit.Nse()
+            for t, sym in clean_symbols.items():
+                fetched = False
+                try:
+                    # Attempt standard NseKit / NseTools methods
+                    if hasattr(nse, 'equity_live_stock_info'):
+                        info = nse.equity_live_stock_info(sym)
+                        if isinstance(info, dict) and 'priceInfo' in info:
+                            prices[t] = float(info['priceInfo'].get('lastPrice', 0))
+                            fetched = True
+                    
+                    if not fetched and hasattr(nse, 'get_quote'):
+                        info = nse.get_quote(sym)
+                        if isinstance(info, dict):
+                            prices[t] = float(info.get('lastPrice', info.get('ltp', 0)))
+                            fetched = True
+                except Exception:
+                    pass
+                
+                if not fetched:
+                    still_missing.append(t)
+                    
+            clean_symbols = {t: clean_symbols[t] for t in still_missing}
+        except ImportError:
+            # NseKit not installed, gracefully proceed to next fallback
+            pass
+
+        # --- Fallback 2: BSE (bseindia & bsedata) ---
+        if clean_symbols:
+            # First try bseindia if installed
+            try:
+                from bseindia import equity
+                still_missing = []
+                for t, sym in clean_symbols.items():
+                    try:
+                        info = equity.stock_info(sym)
+                        if isinstance(info, dict) and 'LTP' in info:
+                            prices[t] = float(info['LTP'])
+                        else:
+                            still_missing.append(t)
+                    except Exception:
+                        still_missing.append(t)
+                clean_symbols = {t: clean_symbols[t] for t in still_missing}
+            except ImportError:
+                pass
+            
+            # Backup try for standard bsedata (requires numeric codes)
+            if clean_symbols:
+                try:
+                    from bsedata.bse import BSE
+                    bse = BSE(update_codes=False)
+                    for t, sym in clean_symbols.items():
+                        if sym.isdigit():
+                            try:
+                                q = bse.getQuote(sym)
+                                prices[t] = float(q['currentValue'])
+                            except Exception:
+                                pass
+                except ImportError:
+                    pass
+
+    return prices
 
 
 # --- UI Primitives ---
@@ -120,7 +184,7 @@ with st.sidebar:
     market_type = st.radio(
         "Select Market Type",
         ("Global", "Indian"),
-        help="Select 'Indian' to append '.NS' to symbols for NSE."
+        help="Select 'Indian' to append '.NS' to symbols for NSE. Enables NseKit & BSE fallbacks."
     )
 
     _section_divider()
@@ -150,7 +214,7 @@ with st.sidebar:
     <div class='info-box'>
         <p style='font-size:0.8rem; margin:0; color:var(--text-muted); line-height:1.5;'>
             <strong>Version:</strong> {VERSION}<br>
-            <strong>Engine:</strong> Yahoo Finance API<br>
+            <strong>Engine:</strong> Multi-Source API<br>
             <strong>Family:</strong> Hemrek Suite
         </p>
     </div>
@@ -200,15 +264,15 @@ if run_button and uploaded_file is not None:
             # Prepare Date Argument
             target_date_arg = selected_valuation_date if date_mode == "Historical Date" else None
             
-            # Fetch data from yfinance
+            # Fetch data using the multi-engine function
             date_display = str(target_date_arg) if target_date_arg else "Latest Live"
             toast_msg = f"Fetching prices ({date_display}) for {len(tickers)} symbols..."
             st.toast(toast_msg, icon="⏳")
             
-            latest_prices = fetch_prices(tickers, target_date_arg)
+            latest_prices = fetch_prices(tickers, target_date_arg, market_type)
             
             if latest_prices.empty:
-                st.error("Could not fetch any data from yfinance. Please check your symbols and market type.")
+                st.error("Could not fetch any data. Please check your symbols, market type, or rate limits.")
             else:
                 portfolio['latest_price'] = portfolio['ticker'].map(latest_prices)
                 
