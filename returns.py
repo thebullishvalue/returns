@@ -297,10 +297,6 @@ def render_portfolio_tables(results_df):
     st.dataframe(display_df.style.format({'Orig Val ($)': '${:,.2f}', 'Price ($)': '${:,.2f}', 'Curr Val ($)': '${:,.2f}', 'P/L ($)': '${:,.2f}', 'P/L (%)': '{:,.2f}%', 'Units': '{:,.2f}'}).background_gradient(cmap='RdYlGn', subset=['P/L (%)'], vmin=-10, vmax=10), use_container_width=True, height=400)
 
 def render_portfolio_charts(results_df, prefix=""):
-    fig_alloc = px.pie(results_df, values='current_value', names='symbol', title=f'{prefix} Allocation', hole=0.4)
-    fig_alloc.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
-    st.plotly_chart(fig_alloc, use_container_width=True)
-    
     fig_bar = px.bar(results_df, x='symbol', y='return_%', color='return_%', color_continuous_scale='RdYlGn', title=f'{prefix} Return %')
     fig_bar.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300)
     st.plotly_chart(fig_bar, use_container_width=True)
@@ -424,16 +420,10 @@ if st.session_state.app_mode == "Single Portfolio":
             st.download_button("Download CSV", data=buf.getvalue(), file_name="returns_single.csv", mime="text/csv", use_container_width=True)
             
         with tab2:
-            st.markdown(_section_header("Performance Visualization", "allocation and returns"), unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
-            with c1:
-                fig_alloc = px.pie(results_df, values='current_value', names='symbol', title='Allocation', hole=0.4)
-                fig_alloc.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_alloc, use_container_width=True)
-            with c2:
-                fig_bar = px.bar(results_df, x='symbol', y='return_%', color='return_%', color_continuous_scale='RdYlGn', title='Return %')
-                fig_bar.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_bar, use_container_width=True)
+            st.markdown(_section_header("Performance Visualization", "returns analysis"), unsafe_allow_html=True)
+            fig_bar = px.bar(results_df, x='symbol', y='return_%', color='return_%', color_continuous_scale='RdYlGn', title='Return %')
+            fig_bar.update_layout(template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.markdown("""<div class='info-box'><h4>Welcome</h4><p>Upload a CSV/Excel file, select settings, and fetch valuations.</p></div>""", unsafe_allow_html=True)
 
